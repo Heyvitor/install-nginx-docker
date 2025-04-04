@@ -11,10 +11,30 @@ if ! command -v figlet &> /dev/null; then
   sudo apt install -y figlet
 fi
 
-# Exibir cabeçalho
-figlet "VRPRIME"
-echo "Comunidade: https://www.vrprime.com.br"
+# Definir cores
+BLUE_BG="\033[44m"   # Fundo azul
+WHITE_TEXT="\033[97m" # Texto branco
+RESET="\033[0m"      # Resetar cores
+
+# Obter largura do terminal
+TERM_WIDTH=$(tput cols)
+
+# Função para centralizar texto
+center_text() {
+  local text="$1"
+  local width="$2"
+  local text_length=${#text}
+  local padding=$(( (width - text_length) / 2 ))
+  printf "%*s%s%*s\n" $padding "" "$text" $padding ""
+}
+
+# Exibir cabeçalho com fundo azul
+echo -e "${BLUE_BG}${WHITE_TEXT}"
 echo ""
+center_text "VR PRIME" $TERM_WIDTH
+center_text "https://www.vrprime.com.br" $TERM_WIDTH
+echo ""
+echo -e "${RESET}"
 
 # Menu de seleção
 echo "Selecione o tipo de aplicação:"
