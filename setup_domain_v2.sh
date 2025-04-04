@@ -10,30 +10,73 @@ fi
 echo "Selecione o tipo de aplicação:"
 echo "1) Laravel"
 echo "2) Node.js/Express"
-read -p "Opção (1/2): " APP_TYPE
+echo "3) N8N - Docker"
+read -p "Opção (1/2/3): " APP_TYPE
 
-if [ "$APP_TYPE" != "1" ] && [ "$APP_TYPE" != "2" ]; then
+if [ "$APP_TYPE" != "1" ] && [ "$APP_TYPE" != "2" ] && [ "$APP_TYPE" != "3" ]; then
   echo "Opção inválida"
   exit 1
 fi
 
 # Pedir domínio e email após seleção do tipo
-read -p "Digite o domínio (ex: meusite.com): " DOMINIO
+if [ "$APP_TYPE" == "3" ]; then
+  read -p "Digite o domínio para o N8N (ex: n8n.meusite.com): " N8N_HOST
+  DOMINIO=$N8N_HOST
+else
+  read -p "Digite o domínio (ex: meusite.com): " DOMINIO
+fi
 read -p "Digite o email para SSL [opcional, padrão admin@$DOMINIO]: " EMAIL_INPUT
 EMAIL=${EMAIL_INPUT:-admin@$DOMINIO}
 
+# Configuração específica por tipo
 if [ "$APP_TYPE" == "1" ]; then
   read -p "Digite o caminho completo para a pasta public do Laravel: " LARAVEL_PATH
   if [ ! -d "$LARAVEL_PATH" ]; then
     echo "Pasta não encontrada: $LARAVEL_PATH"
     exit 1
   fi
-else
+elif [ "$APP_TYPE" == "2" ]; then
   read -p "Digite a porta do servidor Node.js: " PORTA
   if ! [[ "$PORTA" =~ ^[0-9]+$ ]]; then
     echo "Porta inválida"
     exit 1
   fi
+elif [ "$APP_TYPE" == "3" ]; then
+  N8N_PORT=5678
+  GENERIC_TIMEZONE="America/Sao_Paulo"
+  
+  # Criar diretório para o N8N
+  N8N_DIR="/opt/n8n"
+  sudo mkdir -p $N8N_DIR
+  cd $N8N_DIR
+  
+  # Criar docker-compose.yml com variáveis fixas
+  sudo tee docker-compose.yml > /dev/null <<EOL
+version: "3.8"
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:1.86.0
+    restart: always
+    environment:
+      - N8N_HOST=$N8N_HOST
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - NODE_ENV=production
+      - WEBHOOK_URL=https://$N8N_HOST/
+      - GENERIC_TIMEZONE=America/Sao_Paulo
+      - N8N_SECURE_COOKIE=false
+      - N8N_RUNNERS_ENABLED=true
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+    volumes:
+      - n8n_data:/home/node/.n8n
+    ports:
+      - "5678:5678"
+volumes:
+  n8n_data:
+EOL
+
+  # Iniciar o Docker Compose
+  sudo docker-compose up -d
 fi
 
 # Instalar Certbot se não existir
@@ -67,7 +110,7 @@ server {
     }
 }
 EOL
-else
+elif [ "$APP_TYPE" == "2" ]; then
   sudo tee $CONF_FILE > /dev/null <<EOL
 server {
     listen 80;
@@ -75,6 +118,22 @@ server {
 
     location / {
         proxy_pass http://localhost:$PORTA;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
+    }
+}
+EOL
+elif [ "$APP_TYPE" == "3" ]; then
+  sudo tee $CONF_FILE > /dev/null <<EOL
+server {
+    listen 80;
+    server_name $DOMINIO;
+
+    location / {
+        proxy_pass http://localhost:5678;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection 'upgrade';
@@ -151,6 +210,8 @@ fi
 
 if [ "$APP_TYPE" == "1" ]; then
   echo "Laravel configurado na pasta: $LARAVEL_PATH"
-else
+elif [ "$APP_TYPE" == "2" ]; then
   echo "Proxy configurado para porta: $PORTA"
+elif [ "$APP_TYPE" == "3" ]; then
+  echo "N8N configurado via Docker no domínio: $DOMINIO"
 fi
