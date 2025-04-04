@@ -1,0 +1,18 @@
+version: "3.8"
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:$N8N_VERSION
+    restart: always
+    environment:
+      - N8N_HOST=$N8N_HOST
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - NODE_ENV=production
+      - WEBHOOK_URL=https://$N8N_HOST/
+      - GENERIC_TIMEZONE=America/Sao_Paulo
+    volumes:
+      - n8n_data:/home/node/.n8n
+    ports:
+      - "5678:5678"
+volumes:
+  n8n_data:
