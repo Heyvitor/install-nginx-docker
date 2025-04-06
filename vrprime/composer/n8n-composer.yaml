@@ -14,5 +14,7 @@ services:
       - n8n_data:/home/node/.n8n
     ports:
       - "5678:5678"
+    env_file:
+      - .env
 volumes:
   n8n_data:

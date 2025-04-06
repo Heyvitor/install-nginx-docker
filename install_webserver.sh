@@ -16,7 +16,7 @@ sudo systemctl start nginx
 sudo apt install -y software-properties-common
 sudo add-apt-repository -y ppa:ondrej/php
 sudo apt update
-sudo apt install -y php8.2 php8.2-fpm php8.2-mysql php8.2-curl php8.2-gd php8.2-mbstring php8.2-xml php8.2-zip
+sudo apt install -y php8.2 php8.2-fpm php8.2-mysql php8.2-curl php8.2-gd php8.2-mbstring php8.2-xml php8.2-zip php8.2-intl
 sudo systemctl enable php8.2-fpm
 sudo systemctl start php8.2-fpm
 

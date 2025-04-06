@@ -35,23 +35,25 @@ echo "1) Laravel"
 echo "2) Node.js/Express"
 echo "3) N8N - Docker"
 echo "4) EVOLUTION API - Docker"
-read -p "Opção (1/2/3/4): " APP_TYPE
+echo "5) PG Admin - Docker"
+echo "6) WordPress - Docker"
+echo "7) MySql+PhpMyAdmin - Docker"
+read -p "Opção (1/2/3/4/5/6/7): " APP_TYPE
 
-if [ "$APP_TYPE" != "1" ] && [ "$APP_TYPE" != "2" ] && [ "$APP_TYPE" != "3" ] && [ "$APP_TYPE" != "4" ]; then
+if [ "$APP_TYPE" != "1" ] && [ "$APP_TYPE" != "2" ] && [ "$APP_TYPE" != "3" ] && [ "$APP_TYPE" != "4" ] && [ "$APP_TYPE" != "5" ] && [ "$APP_TYPE" != "6" ] && [ "$APP_TYPE" != "7" ]; then
   echo "Opção inválida"
   exit 1
 fi
 
-# Diretório de configurações
-CONFIG_DIR="/home/install/vrprime/configs"
-if [ ! -d "$CONFIG_DIR" ]; then
-  echo "Diretório de configurações não encontrado: $CONFIG_DIR"
-  exit 1
-fi
+# Diretórios base
+INSTALL_DIR="/home/install-nginx-docker/vrprime/install"
+COMPOSER_DIR="/home/install-nginx-docker/vrprime/composer"
+NGINX_DIR="/home/install-nginx-docker/vrprime/nginx"
+sudo mkdir -p "$INSTALL_DIR" "$COMPOSER_DIR" "$NGINX_DIR"
 
-# Função para gerar uma API Key no formato especificado
-generate_api_key() {
-  openssl rand -base64 48 | tr -d '\n' | head -c 64
+# Função para gerar uma chave ou senha
+generate_key() {
+  openssl rand -base64 48 | tr -d '\n' | head -c 32
 }
 
 # Pedir domínio e email
@@ -63,6 +65,7 @@ if [ "$APP_TYPE" == "3" ]; then
     echo "Versão do N8N não pode ser vazia"
     exit 1
   fi
+  APP_DIR="$INSTALL_DIR/n8n"
 elif [ "$APP_TYPE" == "4" ]; then
   read -p "Digite o domínio para o Evolution API (ex: evolution.meusite.com): " SERVER_URL
   DOMINIO=$SERVER_URL
@@ -75,11 +78,35 @@ elif [ "$APP_TYPE" == "4" ]; then
   fi
   read -p "Digite a senha do PostgreSQL (ou deixe em branco para gerar automaticamente): " POSTGRES_PASSWORD
   if [ -z "$POSTGRES_PASSWORD" ]; then
-    POSTGRES_PASSWORD=$(openssl rand -base64 12)
+    POSTGRES_PASSWORD=$(generate_key)
   fi
-  AUTHENTICATION_API_KEY=$(generate_api_key)
+  AUTHENTICATION_API_KEY=$(generate_key)
+  APP_DIR="$INSTALL_DIR/evolution"
+elif [ "$APP_TYPE" == "5" ]; then
+  read -p "Digite o domínio para o PG Admin (ex: pgadmin.meusite.com): " DOMINIO
+  read -p "Digite a porta externa para o PG Admin (ex: 5050): " PGADMIN_PORT
+  read -p "Digite o email para o PG Admin: " PGADMIN_DEFAULT_EMAIL
+  read -p "Digite a senha para o PG Admin: " PGADMIN_DEFAULT_PASSWORD
+  APP_DIR="$INSTALL_DIR/pgadmin"
+elif [ "$APP_TYPE" == "6" ]; then
+  read -p "Digite o domínio para o WordPress (ex: wordpress.meusite.com): " DOMINIO
+  read -p "Digite a porta externa para o WordPress (ex: 8080): " WORDPRESS_PORT
+  MYSQL_DATABASE="wordpress_db_$(openssl rand -hex 4)"
+  MYSQL_USER="wp_user_$(openssl rand -hex 4)"
+  MYSQL_PASSWORD=$(generate_key)
+  MYSQL_ROOT_PASSWORD=$(generate_key)
+  APP_DIR="$INSTALL_DIR/wordpress"
+elif [ "$APP_TYPE" == "7" ]; then
+  read -p "Digite o domínio para o PhpMyAdmin (ex: phpmyadmin.meusite.com): " DOMINIO
+  read -p "Digite a porta externa para o PhpMyAdmin (ex: 8081): " PHPMYADMIN_PORT
+  read -p "Digite o usuário para o MySQL: " MYSQL_USER
+  read -p "Digite a senha para o MySQL: " MYSQL_PASSWORD
+  MYSQL_ROOT_PASSWORD=$(generate_key)
+  MYSQL_DATABASE="mysql"
+  APP_DIR="$INSTALL_DIR/mysql-phpmyadmin"
 else
   read -p "Digite o domínio (ex: meusite.com): " DOMINIO
+  APP_DIR="$INSTALL_DIR/$DOMINIO"
 fi
 read -p "Digite o email para SSL [opcional, padrão admin@$DOMINIO]: " EMAIL_INPUT
 EMAIL=${EMAIL_INPUT:-admin@$DOMINIO}
@@ -91,63 +118,163 @@ if [ "$APP_TYPE" == "1" ]; then
     echo "Pasta não encontrada: $LARAVEL_PATH"
     exit 1
   fi
-  if [ ! -f "$CONFIG_DIR/laravel.conf" ]; then
-    echo "Arquivo de configuração não encontrado: $CONFIG_DIR/laravel.conf"
+  if [ ! -f "$NGINX_DIR/laravel.conf" ]; then
+    echo "Arquivo de configuração não encontrado: $NGINX_DIR/laravel.conf"
     exit 1
   fi
-  sudo sed -e "s|\$DOMINIO|$DOMINIO|g" -e "s|\$LARAVEL_PATH|$LARAVEL_PATH|g" "$CONFIG_DIR/laravel.conf" > "/etc/nginx/sites-available/$DOMINIO"
+  sudo sed -e "s|\$DOMINIO|$DOMINIO|g" -e "s|\$LARAVEL_PATH|$LARAVEL_PATH|g" "$NGINX_DIR/laravel.conf" > "/etc/nginx/sites-available/$DOMINIO"
 elif [ "$APP_TYPE" == "2" ]; then
   read -p "Digite a porta do servidor Node.js: " PORTA
   if ! [[ "$PORTA" =~ ^[0-9]+$ ]]; then
     echo "Porta inválida"
     exit 1
   fi
-  if [ ! -f "$CONFIG_DIR/node.conf" ]; then
-    echo "Arquivo de configuração não encontrado: $CONFIG_DIR/node.conf"
+  if [ ! -f "$NGINX_DIR/node.conf" ]; then
+    echo "Arquivo de configuração não encontrado: $NGINX_DIR/node.conf"
     exit 1
   fi
-  sudo sed -e "s|\$DOMINIO|$DOMINIO|g" -e "s|\$PORTA|$PORTA|g" "$CONFIG_DIR/node.conf" > "/etc/nginx/sites-available/$DOMINIO"
+  sudo sed -e "s|\$DOMINIO|$DOMINIO|g" -e "s|\$PORTA|$PORTA|g" "$NGINX_DIR/node.conf" > "/etc/nginx/sites-available/$DOMINIO"
 elif [ "$APP_TYPE" == "3" ]; then
-  N8N_PORT=5678
-  N8N_DIR="/opt/n8n"
-  sudo mkdir -p "$N8N_DIR"
-  cd "$N8N_DIR"
-  if [ ! -f "$CONFIG_DIR/n8n-composer.yaml" ]; then
-    echo "Arquivo de configuração não encontrado: $CONFIG_DIR/n8n-composer.yaml"
+  sudo mkdir -p "$APP_DIR"
+  cd "$APP_DIR"
+  if [ ! -f "$COMPOSER_DIR/n8n-composer.yaml" ]; then
+    echo "Arquivo de configuração não encontrado: $COMPOSER_DIR/n8n-composer.yaml"
     exit 1
   fi
-  sudo sed -e "s|\$N8N_HOST|$N8N_HOST|g" -e "s|\$N8N_VERSION|$N8N_VERSION|g" "$CONFIG_DIR/n8n-composer.yaml" > "$N8N_DIR/docker-compose.yml"
+  sudo sed -e "s|\$N8N_VERSION|$N8N_VERSION|g" "$COMPOSER_DIR/n8n-composer.yaml" > "$APP_DIR/docker-compose.yml"
+  sudo tee "$APP_DIR/.env" > /dev/null <<EOL
+N8N_HOST=$N8N_HOST
+N8N_PORT=5678
+N8N_PROTOCOL=https
+NODE_ENV=production
+WEBHOOK_URL=https://$N8N_HOST/
+GENERIC_TIMEZONE=America/Sao_Paulo
+N8N_SECURE_COOKIE=false
+N8N_RUNNERS_ENABLED=true
+N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+EOL
   sudo docker-compose up -d
-  if [ ! -f "$CONFIG_DIR/n8n.conf" ]; then
-    echo "Arquivo de configuração não encontrado: $CONFIG_DIR/n8n.conf"
+  if [ ! -f "$NGINX_DIR/n8n.conf" ]; then
+    echo "Arquivo de configuração não encontrado: $NGINX_DIR/n8n.conf"
     exit 1
   fi
-  sudo sed -e "s|\$DOMINIO|$DOMINIO|g" "$CONFIG_DIR/n8n.conf" > "/etc/nginx/sites-available/$DOMINIO"
+  sudo sed -e "s|\$DOMINIO|$DOMINIO|g" "$NGINX_DIR/n8n.conf" > "/etc/nginx/sites-available/$DOMINIO"
 elif [ "$APP_TYPE" == "4" ]; then
-  EVOLUTION_DIR="/opt/evolution"
-  sudo mkdir -p "$EVOLUTION_DIR"
-  cd "$EVOLUTION_DIR"
-  
-  # Verificar se o arquivo de configuração existe
-  if [ ! -f "$CONFIG_DIR/evolution-composer.yaml" ]; then
-    echo "Arquivo de configuração não encontrado: $CONFIG_DIR/evolution-composer.yaml"
+  sudo mkdir -p "$APP_DIR"
+  cd "$APP_DIR"
+  if [ ! -f "$COMPOSER_DIR/evolution-composer.yaml" ]; then
+    echo "Arquivo de configuração não encontrado: $COMPOSER_DIR/evolution-composer.yaml"
     exit 1
   fi
-  # Copiar e substituir placeholders
-  sudo sed -e "s|\$SERVER_URL|$SERVER_URL|g" \
-           -e "s|\$AUTHENTICATION_API_KEY|$AUTHENTICATION_API_KEY|g" \
-           -e "s|\$POSTGRES_PASSWORD|$POSTGRES_PASSWORD|g" \
-           -e "s|\$EVOLUTION_VERSION|$EVOLUTION_VERSION|g" \
-           -e "s|\$EVOLUTION_PORT|$EVOLUTION_PORT|g" \
-           "$CONFIG_DIR/evolution-composer.yaml" > "$EVOLUTION_DIR/docker-compose.yml"
+  sudo sed -e "s|\$EVOLUTION_VERSION|$EVOLUTION_VERSION|g" -e "s|\$EVOLUTION_PORT|$EVOLUTION_PORT|g" "$COMPOSER_DIR/evolution-composer.yaml" > "$APP_DIR/docker-compose.yml"
+  sudo tee "$APP_DIR/.env" > /dev/null <<EOL
+SERVER_URL=https://$SERVER_URL
+AUTHENTICATION_TYPE=apikey
+AUTHENTICATION_API_KEY=$AUTHENTICATION_API_KEY
+AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES=true
+LANGUAGE=en
+CONFIG_SESSION_PHONE_CLIENT=Windows
+CONFIG_SESSION_PHONE_NAME=Firefox
+TELEMETRY=false
+TELEMETRY_URL=
+DATABASE_ENABLED=true
+DATABASE_PROVIDER=postgresql
+DATABASE_CONNECTION_URI=postgres://postgresql:$POSTGRES_PASSWORD@evolution-postgres:5432/evolution
+DATABASE_SAVE_DATA_INSTANCE=true
+DATABASE_SAVE_DATA_NEW_MESSAGE=true
+DATABASE_SAVE_MESSAGE_UPDATE=true
+DATABASE_SAVE_DATA_CONTACTS=true
+DATABASE_SAVE_DATA_CHATS=true
+DATABASE_SAVE_DATA_LABELS=true
+DATABASE_SAVE_DATA_HISTORIC=true
+CACHE_REDIS_ENABLED=true
+CACHE_REDIS_URI=redis://evolution-redis:6379
+CACHE_REDIS_PREFIX_KEY=evolution
+CACHE_REDIS_SAVE_INSTANCES=true
+CHATWOOT_ENABLED=true
+CHATWOOT_MESSAGE_READ=true
+CHATWOOT_MESSAGE_DELETE=true
+CHATWOOT_IMPORT_DATABASE_CONNECTION_URI=postgres://postgresql:$POSTGRES_PASSWORD@evolution-postgres:5432/evolution
+POSTGRES_DB=evolution
+POSTGRES_USER=postgresql
+POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+EOL
   sudo docker-compose up -d
-
-  # Configuração Nginx para Evolution API
-  if [ ! -f "$CONFIG_DIR/evolution.conf" ]; then
-    echo "Arquivo de configuração não encontrado: $CONFIG_DIR/evolution.conf"
+  if [ ! -f "$NGINX_DIR/evolution.conf" ]; then
+    echo "Arquivo de configuração não encontrado: $NGINX_DIR/evolution.conf"
     exit 1
   fi
-  sudo sed -e "s|\$DOMINIO|$DOMINIO|g" -e "s|localhost:8080|localhost:$EVOLUTION_PORT|g" "$CONFIG_DIR/evolution.conf" > "/etc/nginx/sites-available/$DOMINIO"
+  sudo sed -e "s|\$DOMINIO|$DOMINIO|g" -e "s|localhost:8080|localhost:$EVOLUTION_PORT|g" "$NGINX_DIR/evolution.conf" > "/etc/nginx/sites-available/$DOMINIO"
+elif [ "$APP_TYPE" == "5" ]; then
+  sudo mkdir -p "$APP_DIR"
+  cd "$APP_DIR"
+  if [ ! -f "$COMPOSER_DIR/pgadmin-docker.yaml" ]; then
+    echo "Arquivo de configuração não encontrado: $COMPOSER_DIR/pgadmin-docker.yaml"
+    exit 1
+  fi
+  sudo cp "$COMPOSER_DIR/pgadmin-docker.yaml" "$APP_DIR/docker-compose.yml"
+  sudo sed -i "s|\$PGADMIN_PORT|$PGADMIN_PORT|g" "$APP_DIR/docker-compose.yml"
+  sudo tee "$APP_DIR/.env" > /dev/null <<EOL
+PGADMIN_DEFAULT_EMAIL=$PGADMIN_DEFAULT_EMAIL
+PGADMIN_DEFAULT_PASSWORD=$PGADMIN_DEFAULT_PASSWORD
+PGADMIN_CONFIG_SERVER_MODE=False
+PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED=False
+EOL
+  sudo docker-compose up -d
+  if [ ! -f "$NGINX_DIR/pgadmin.conf" ]; then
+    echo "Arquivo de configuração não encontrado: $NGINX_DIR/pgadmin.conf"
+    exit 1
+  fi
+  sudo sed -e "s|\$DOMINIO|$DOMINIO|g" -e "s|\$PGADMIN_PORT|$PGADMIN_PORT|g" "$NGINX_DIR/pgadmin.conf" > "/etc/nginx/sites-available/$DOMINIO"
+elif [ "$APP_TYPE" == "6" ]; then
+  sudo mkdir -p "$APP_DIR"
+  cd "$APP_DIR"
+  if [ ! -f "$COMPOSER_DIR/wordpress-docker.yaml" ]; then
+    echo "Arquivo de configuração não encontrado: $COMPOSER_DIR/wordpress-docker.yaml"
+    exit 1
+  fi
+  sudo cp "$COMPOSER_DIR/wordpress-docker.yaml" "$APP_DIR/docker-compose.yml"
+  sudo sed -i "s|\$WORDPRESS_PORT|$WORDPRESS_PORT|g" "$APP_DIR/docker-compose.yml"
+  sudo tee "$APP_DIR/.env" > /dev/null <<EOL
+WORDPRESS_DB_HOST=db
+WORDPRESS_DB_USER=$MYSQL_USER
+WORDPRESS_DB_PASSWORD=$MYSQL_PASSWORD
+WORDPRESS_DB_NAME=$MYSQL_DATABASE
+MYSQL_DATABASE=$MYSQL_DATABASE
+MYSQL_USER=$MYSQL_USER
+MYSQL_PASSWORD=$MYSQL_PASSWORD
+MYSQL_ROOT_PASSWORD=$MYSQL_ROOT_PASSWORD
+EOL
+  sudo docker-compose up -d
+  if [ ! -f "$NGINX_DIR/wordpress.conf" ]; then
+    echo "Arquivo de configuração não encontrado: $NGINX_DIR/wordpress.conf"
+    exit 1
+  fi
+  sudo sed -e "s|\$DOMINIO|$DOMINIO|g" -e "s|\$WORDPRESS_PORT|$WORDPRESS_PORT|g" "$NGINX_DIR/wordpress.conf" > "/etc/nginx/sites-available/$DOMINIO"
+elif [ "$APP_TYPE" == "7" ]; then
+  sudo mkdir -p "$APP_DIR"
+  cd "$APP_DIR"
+  if [ ! -f "$COMPOSER_DIR/mysql-phpmy-composer.yaml" ]; then
+    echo "Arquivo de configuração não encontrado: $COMPOSER_DIR/mysql-phpmy-composer.yaml"
+    exit 1
+  fi
+  sudo cp "$COMPOSER_DIR/mysql-phpmy-composer.yaml" "$APP_DIR/docker-compose.yml"
+  sudo sed -i "s|\$PHPMYADMIN_PORT|$PHPMYADMIN_PORT|g" "$APP_DIR/docker-compose.yml"
+  sudo tee "$APP_DIR/.env" > /dev/null <<EOL
+MYSQL_ROOT_PASSWORD=$MYSQL_ROOT_PASSWORD
+MYSQL_DATABASE=$MYSQL_DATABASE
+MYSQL_USER=$MYSQL_USER
+MYSQL_PASSWORD=$MYSQL_PASSWORD
+PMA_HOST=db
+PMA_ARBITRARY=0
+PHPMYADMIN_PORT=$PHPMYADMIN_PORT
+EOL
+  sudo docker-compose up -d
+  if [ ! -f "$NGINX_DIR/mysql-phpmy.conf" ]; then
+    echo "Arquivo de configuração não encontrado: $NGINX_DIR/mysql-phpmy.conf"
+    exit 1
+  fi
+  sudo sed -e "s|\$DOMINIO|$DOMINIO|g" -e "s|\$PHPMYADMIN_PORT|$PHPMYADMIN_PORT|g" "$NGINX_DIR/mysql-phpmy.conf" > "/etc/nginx/sites-available/$DOMINIO"
 fi
 
 # Instalar Certbot se não existir
@@ -182,4 +309,19 @@ elif [ "$APP_TYPE" == "4" ]; then
   echo "Porta externa: $EVOLUTION_PORT"
   echo "Chave de autenticação gerada: $AUTHENTICATION_API_KEY"
   echo "Senha PostgreSQL: $POSTGRES_PASSWORD"
+elif [ "$APP_TYPE" == "5" ]; then
+  echo "PG Admin configurado via Docker no domínio: $DOMINIO com porta $PGADMIN_PORT"
+  echo "Email: $PGADMIN_DEFAULT_EMAIL"
+  echo "Senha: $PGADMIN_DEFAULT_PASSWORD"
+elif [ "$APP_TYPE" == "6" ]; then
+  echo "WordPress configurado via Docker no domínio: $DOMINIO com porta $WORDPRESS_PORT"
+  echo "Banco de dados: $MYSQL_DATABASE"
+  echo "Usuário: $MYSQL_USER"
+  echo "Senha: $MYSQL_PASSWORD"
+  echo "Senha root: $MYSQL_ROOT_PASSWORD"
+elif [ "$APP_TYPE" == "7" ]; then
+  echo "MySql+PhpMyAdmin configurado via Docker no domínio: $DOMINIO com porta $PHPMYADMIN_PORT"
+  echo "Usuário MySQL: $MYSQL_USER"
+  echo "Senha MySQL: $MYSQL_PASSWORD"
+  echo "Senha root MySQL: $MYSQL_ROOT_PASSWORD"
 fi
