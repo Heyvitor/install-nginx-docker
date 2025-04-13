@@ -1,0 +1,115 @@
+version: "3.8"
+
+services:
+  chatwoot-rails:
+    image: chatwoot/chatwoot:v4.0.4
+    restart: always
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Waiting for postgres to become ready..."
+        until pg_isready -h chatwoot-postgres -p 5432 -U $POSTGRES_USERNAME -d $POSTGRES_DATABASE; do
+          echo "Postgres is not ready yet, sleeping for 2 seconds..."
+          sleep 2
+        done
+        echo "Database ready to accept connections."
+        bundle install
+        bundle check || true
+        bundle exec rails db:chatwoot_prepare
+        bundle exec rails s -p 3000 -b 0.0.0.0
+    environment:
+      - FRONTEND_URL=https://$DOMINIO
+      - SECRET_KEY_BASE=$SECRET_KEY_BASE
+      - RAILS_ENV=production
+      - NODE_ENV=production
+      - INSTALLATION_ENV=docker
+      - RAILS_LOG_TO_STDOUT=true
+      - LOG_LEVEL=info
+      - DEFAULT_LOCALE=en
+      - POSTGRES_HOST=chatwoot-postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DATABASE=$POSTGRES_DATABASE
+      - POSTGRES_USERNAME=$POSTGRES_USERNAME
+      - POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+      - REDIS_URL=redis://chatwoot-redis:6379
+      - ENABLE_ACCOUNT_SIGNUP=false
+      - ACTIVE_STORAGE_SERVICE=local
+    volumes:
+      - chatwoot-storage:/app/storage
+    ports:
+      - "$CHATWOOT_PORT:3000"
+    depends_on:
+      chatwoot-postgres:
+        condition: service_healthy
+      chatwoot-redis:
+        condition: service_started
+    env_file:
+      - .env
+
+  chatwoot-sidekiq:
+    image: chatwoot/chatwoot:v4.0.4
+    restart: always
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Waiting for postgres to become ready..."
+        until pg_isready -h chatwoot-postgres -p 5432 -U $POSTGRES_USERNAME -d $POSTGRES_DATABASE; do
+          echo "Postgres is not ready yet, sleeping for 2 seconds..."
+          sleep 2
+        done
+        echo "Database ready to accept connections."
+        bundle install
+        bundle check || true
+        bundle exec sidekiq -C config/sidekiq.yml
+    environment:
+      - FRONTEND_URL=https://$DOMINIO
+      - SECRET_KEY_BASE=$SECRET_KEY_BASE
+      - RAILS_ENV=production
+      - NODE_ENV=production
+      - INSTALLATION_ENV=docker
+      - RAILS_LOG_TO_STDOUT=true
+      - LOG_LEVEL=info
+      - DEFAULT_LOCALE=en
+      - POSTGRES_HOST=chatwoot-postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DATABASE=$POSTGRES_DATABASE
+      - POSTGRES_USERNAME=$POSTGRES_USERNAME
+      - POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+      - REDIS_URL=redis://chatwoot-redis:6379
+      - ENABLE_ACCOUNT_SIGNUP=false
+      - ACTIVE_STORAGE_SERVICE=local
+    volumes:
+      - chatwoot-storage:/app/storage
+    depends_on:
+      chatwoot-postgres:
+        condition: service_healthy
+      chatwoot-redis:
+        condition: service_started
+    env_file:
+      - .env
+
+  chatwoot-postgres:
+    image: pgvector/pgvector:pg14
+    restart: always
+    environment:
+      - POSTGRES_DB=$POSTGRES_DATABASE
+      - POSTGRES_USER=$POSTGRES_USERNAME
+      - POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+    volumes:
+      - chatwoot-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $POSTGRES_USERNAME -d $POSTGRES_DATABASE"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  chatwoot-redis:
+    image: redis:alpine
+    restart: always
+    volumes:
+      - chatwoot-redis-data:/data
+
+volumes:
+  chatwoot-storage:
+  chatwoot-postgres-data:
+  chatwoot-redis-data:

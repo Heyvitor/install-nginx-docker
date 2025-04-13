@@ -37,9 +37,10 @@ echo "3) N8N - Docker"
 echo "4) EVOLUTION API - Docker"
 echo "5) PG Admin - Docker"
 echo "6) WordPress - Docker"
-read -p "Opção (1/2/3/4/5/6): " APP_TYPE
+echo "7) MySql+PhpMyAdmin - Docker"
+read -p "Opção (1/2/3/4/5/6/7): " APP_TYPE
 
-if [ "$APP_TYPE" != "1" ] && [ "$APP_TYPE" != "2" ] && [ "$APP_TYPE" != "3" ] && [ "$APP_TYPE" != "4" ] && [ "$APP_TYPE" != "5" ] && [ "$APP_TYPE" != "6" ]; then
+if [ "$APP_TYPE" != "1" ] && [ "$APP_TYPE" != "2" ] && [ "$APP_TYPE" != "3" ] && [ "$APP_TYPE" != "4" ] && [ "$APP_TYPE" != "5" ] && [ "$APP_TYPE" != "6" ] && [ "$APP_TYPE" != "7" ]; then
   echo "Opção inválida"
   exit 1
 fi
@@ -50,9 +51,9 @@ COMPOSER_DIR="/home/install-nginx-docker/vrprime/composer"
 NGINX_DIR="/home/install-nginx-docker/vrprime/nginx"
 sudo mkdir -p "$INSTALL_DIR" "$COMPOSER_DIR" "$NGINX_DIR"
 
-# Função para gerar uma API Key no formato especificado
-generate_api_key() {
-  openssl rand -base64 48 | tr -d '\n' | head -c 64
+# Função para gerar uma chave ou senha
+generate_key() {
+  openssl rand -base64 48 | tr -d '\n' | head -c 32
 }
 
 # Pedir domínio e email
@@ -77,9 +78,9 @@ elif [ "$APP_TYPE" == "4" ]; then
   fi
   read -p "Digite a senha do PostgreSQL (ou deixe em branco para gerar automaticamente): " POSTGRES_PASSWORD
   if [ -z "$POSTGRES_PASSWORD" ]; then
-    POSTGRES_PASSWORD=$(openssl rand -base64 12)
+    POSTGRES_PASSWORD=$(generate_key)
   fi
-  AUTHENTICATION_API_KEY=$(generate_api_key)
+  AUTHENTICATION_API_KEY=$(generate_key)
   APP_DIR="$INSTALL_DIR/evolution"
 elif [ "$APP_TYPE" == "5" ]; then
   read -p "Digite o domínio para o PG Admin (ex: pgadmin.meusite.com): " DOMINIO
@@ -92,9 +93,17 @@ elif [ "$APP_TYPE" == "6" ]; then
   read -p "Digite a porta externa para o WordPress (ex: 8080): " WORDPRESS_PORT
   MYSQL_DATABASE="wordpress_db_$(openssl rand -hex 4)"
   MYSQL_USER="wp_user_$(openssl rand -hex 4)"
-  MYSQL_PASSWORD=$(openssl rand -base64 12)
-  MYSQL_ROOT_PASSWORD=$(openssl rand -base64 12)
+  MYSQL_PASSWORD=$(generate_key)
+  MYSQL_ROOT_PASSWORD=$(generate_key)
   APP_DIR="$INSTALL_DIR/wordpress"
+elif [ "$APP_TYPE" == "7" ]; then
+  read -p "Digite o domínio para o PhpMyAdmin (ex: phpmyadmin.meusite.com): " DOMINIO
+  read -p "Digite a porta externa para o PhpMyAdmin (ex: 8081): " PHPMYADMIN_PORT
+  read -p "Digite o usuário para o MySQL: " MYSQL_USER
+  read -p "Digite a senha para o MySQL: " MYSQL_PASSWORD
+  MYSQL_ROOT_PASSWORD=$(generate_key)
+  MYSQL_DATABASE="mysql"
+  APP_DIR="$INSTALL_DIR/mysql-phpmyadmin"
 else
   read -p "Digite o domínio (ex: meusite.com): " DOMINIO
   APP_DIR="$INSTALL_DIR/$DOMINIO"
@@ -242,6 +251,30 @@ EOL
     exit 1
   fi
   sudo sed -e "s|\$DOMINIO|$DOMINIO|g" -e "s|\$WORDPRESS_PORT|$WORDPRESS_PORT|g" "$NGINX_DIR/wordpress.conf" > "/etc/nginx/sites-available/$DOMINIO"
+elif [ "$APP_TYPE" == "7" ]; then
+  sudo mkdir -p "$APP_DIR"
+  cd "$APP_DIR"
+  if [ ! -f "$COMPOSER_DIR/mysql-phpmy-composer.yaml" ]; then
+    echo "Arquivo de configuração não encontrado: $COMPOSER_DIR/mysql-phpmy-composer.yaml"
+    exit 1
+  fi
+  sudo cp "$COMPOSER_DIR/mysql-phpmy-composer.yaml" "$APP_DIR/docker-compose.yml"
+  sudo sed -i "s|\$PHPMYADMIN_PORT|$PHPMYADMIN_PORT|g" "$APP_DIR/docker-compose.yml"
+  sudo tee "$APP_DIR/.env" > /dev/null <<EOL
+MYSQL_ROOT_PASSWORD=$MYSQL_ROOT_PASSWORD
+MYSQL_DATABASE=$MYSQL_DATABASE
+MYSQL_USER=$MYSQL_USER
+MYSQL_PASSWORD=$MYSQL_PASSWORD
+PMA_HOST=db
+PMA_ARBITRARY=0
+PHPMYADMIN_PORT=$PHPMYADMIN_PORT
+EOL
+  sudo docker-compose up -d
+  if [ ! -f "$NGINX_DIR/mysql-phpmy.conf" ]; then
+    echo "Arquivo de configuração não encontrado: $NGINX_DIR/mysql-phpmy.conf"
+    exit 1
+  fi
+  sudo sed -e "s|\$DOMINIO|$DOMINIO|g" -e "s|\$PHPMYADMIN_PORT|$PHPMYADMIN_PORT|g" "$NGINX_DIR/mysql-phpmy.conf" > "/etc/nginx/sites-available/$DOMINIO"
 fi
 
 # Instalar Certbot se não existir
@@ -286,4 +319,9 @@ elif [ "$APP_TYPE" == "6" ]; then
   echo "Usuário: $MYSQL_USER"
   echo "Senha: $MYSQL_PASSWORD"
   echo "Senha root: $MYSQL_ROOT_PASSWORD"
+elif [ "$APP_TYPE" == "7" ]; then
+  echo "MySql+PhpMyAdmin configurado via Docker no domínio: $DOMINIO com porta $PHPMYADMIN_PORT"
+  echo "Usuário MySQL: $MYSQL_USER"
+  echo "Senha MySQL: $MYSQL_PASSWORD"
+  echo "Senha root MySQL: $MYSQL_ROOT_PASSWORD"
 fi

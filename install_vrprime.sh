@@ -38,9 +38,10 @@ echo "4) EVOLUTION API - Docker"
 echo "5) PG Admin - Docker"
 echo "6) WordPress - Docker"
 echo "7) MySql+PhpMyAdmin - Docker"
-read -p "Opção (1/2/3/4/5/6/7): " APP_TYPE
+echo "8) Chatwoot - Docker"
+read -p "Opção (1/2/3/4/5/6/7/8): " APP_TYPE
 
-if [ "$APP_TYPE" != "1" ] && [ "$APP_TYPE" != "2" ] && [ "$APP_TYPE" != "3" ] && [ "$APP_TYPE" != "4" ] && [ "$APP_TYPE" != "5" ] && [ "$APP_TYPE" != "6" ] && [ "$APP_TYPE" != "7" ]; then
+if [ "$APP_TYPE" != "1" ] && [ "$APP_TYPE" != "2" ] && [ "$APP_TYPE" != "3" ] && [ "$APP_TYPE" != "4" ] && [ "$APP_TYPE" != "5" ] && [ "$APP_TYPE" != "6" ] && [ "$APP_TYPE" != "7" ] && [ "$APP_TYPE" != "8" ]; then
   echo "Opção inválida"
   exit 1
 fi
@@ -54,6 +55,11 @@ sudo mkdir -p "$INSTALL_DIR" "$COMPOSER_DIR" "$NGINX_DIR"
 # Função para gerar uma chave ou senha
 generate_key() {
   openssl rand -base64 48 | tr -d '\n' | head -c 32
+}
+
+# Função para gerar SECRET_KEY_BASE (128 caracteres, base64)
+generate_secret_key_base() {
+  openssl rand -base64 96 | tr -d '\n' | head -c 128
 }
 
 # Pedir domínio e email
@@ -104,6 +110,17 @@ elif [ "$APP_TYPE" == "7" ]; then
   MYSQL_ROOT_PASSWORD=$(generate_key)
   MYSQL_DATABASE="mysql"
   APP_DIR="$INSTALL_DIR/mysql-phpmyadmin"
+elif [ "$APP_TYPE" == "8" ]; then
+  read -p "Digite o domínio para o Chatwoot (ex: chatwoot.meusite.com): " DOMINIO
+  read -p "Digite a porta externa para o Chatwoot (ex: 3000): " CHATWOOT_PORT
+  read -p "Digite a senha do PostgreSQL (ou deixe em branco para gerar automaticamente): " POSTGRES_PASSWORD
+  if [ -z "$POSTGRES_PASSWORD" ]; then
+    POSTGRES_PASSWORD=$(openssl rand -base64 12 | tr -d '\n' | head -c 16)
+  fi
+  SECRET_KEY_BASE=$(generate_secret_key_base)
+  POSTGRES_DATABASE="chatwoot_db_$(openssl rand -hex 4)"
+  POSTGRES_USERNAME="chatwoot_user_$(openssl rand -hex 4)"
+  APP_DIR="$INSTALL_DIR/chatwoot"
 else
   read -p "Digite o domínio (ex: meusite.com): " DOMINIO
   APP_DIR="$INSTALL_DIR/$DOMINIO"
@@ -275,6 +292,45 @@ EOL
     exit 1
   fi
   sudo sed -e "s|\$DOMINIO|$DOMINIO|g" -e "s|\$PHPMYADMIN_PORT|$PHPMYADMIN_PORT|g" "$NGINX_DIR/mysql-phpmy.conf" > "/etc/nginx/sites-available/$DOMINIO"
+elif [ "$APP_TYPE" == "8" ]; then
+  sudo mkdir -p "$APP_DIR"
+  cd "$APP_DIR"
+  if [ ! -f "$COMPOSER_DIR/chatwoot-composer.yaml" ]; then
+    echo "Arquivo de configuração não encontrado: $COMPOSER_DIR/chatwoot-composer.yaml"
+    exit 1
+  fi
+  # Substituir todas as variáveis no docker-compose.yml
+  sudo sed -e "s|\$DOMINIO|$DOMINIO|g" \
+           -e "s|\$SECRET_KEY_BASE|$SECRET_KEY_BASE|g" \
+           -e "s|\$POSTGRES_DATABASE|$POSTGRES_DATABASE|g" \
+           -e "s|\$POSTGRES_USERNAME|$POSTGRES_USERNAME|g" \
+           -e "s|\$POSTGRES_PASSWORD|$POSTGRES_PASSWORD|g" \
+           -e "s|\$CHATWOOT_PORT|$CHATWOOT_PORT|g" \
+           "$COMPOSER_DIR/chatwoot-composer.yaml" > "$APP_DIR/docker-compose.yml"
+  sudo tee "$APP_DIR/.env" > /dev/null <<EOL
+FRONTEND_URL=https://$DOMINIO
+SECRET_KEY_BASE=$SECRET_KEY_BASE
+RAILS_ENV=production
+NODE_ENV=production
+INSTALLATION_ENV=docker
+RAILS_LOG_TO_STDOUT=true
+LOG_LEVEL=info
+DEFAULT_LOCALE=en
+POSTGRES_HOST=chatwoot-postgres
+POSTGRES_PORT=5432
+POSTGRES_DATABASE=$POSTGRES_DATABASE
+POSTGRES_USERNAME=$POSTGRES_USERNAME
+POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+REDIS_URL=redis://chatwoot-redis:6379
+ENABLE_ACCOUNT_SIGNUP=false
+ACTIVE_STORAGE_SERVICE=local
+EOL
+  sudo docker-compose up -d
+  if [ ! -f "$NGINX_DIR/chatwoot.conf" ]; then
+    echo "Arquivo de configuração não encontrado: $NGINX_DIR/chatwoot.conf"
+    exit 1
+  fi
+  sudo sed -e "s|\$DOMINIO|$DOMINIO|g" -e "s|\$CHATWOOT_PORT|$CHATWOOT_PORT|g" "$NGINX_DIR/chatwoot.conf" > "/etc/nginx/sites-available/$DOMINIO"
 fi
 
 # Instalar Certbot se não existir
@@ -324,4 +380,10 @@ elif [ "$APP_TYPE" == "7" ]; then
   echo "Usuário MySQL: $MYSQL_USER"
   echo "Senha MySQL: $MYSQL_PASSWORD"
   echo "Senha root MySQL: $MYSQL_ROOT_PASSWORD"
+elif [ "$APP_TYPE" == "8" ]; then
+  echo "Chatwoot configurado via Docker no domínio: $DOMINIO com porta $CHATWOOT_PORT"
+  echo "Banco de dados: $POSTGRES_DATABASE"
+  echo "Usuário PostgreSQL: $POSTGRES_USERNAME"
+  echo "Senha PostgreSQL: $POSTGRES_PASSWORD"
+  echo "Secret Key Base: $SECRET_KEY_BASE"
 fi
