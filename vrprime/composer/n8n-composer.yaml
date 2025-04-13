@@ -10,6 +10,9 @@ services:
       - NODE_ENV=production
       - WEBHOOK_URL=https://$N8N_HOST/
       - GENERIC_TIMEZONE=America/Sao_Paulo
+      - N8N_SECURE_COOKIE=false
+      - N8N_RUNNERS_ENABLED=true
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
     volumes:
       - n8n_data:/home/node/.n8n
     ports:

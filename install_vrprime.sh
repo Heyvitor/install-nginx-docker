@@ -91,8 +91,14 @@ elif [ "$APP_TYPE" == "4" ]; then
 elif [ "$APP_TYPE" == "5" ]; then
   read -p "Digite o domínio para o PG Admin (ex: pgadmin.meusite.com): " DOMINIO
   read -p "Digite a porta externa para o PG Admin (ex: 5050): " PGADMIN_PORT
+  read -p "Digite a porta externa para o PostgreSQL (ex: 5432): " POSTGRES_PORT
   read -p "Digite o email para o PG Admin: " PGADMIN_DEFAULT_EMAIL
   read -p "Digite a senha para o PG Admin: " PGADMIN_DEFAULT_PASSWORD
+  read -p "Digite a senha para o PostgreSQL (ou deixe em branco para gerar automaticamente): " POSTGRES_PASSWORD
+  if [ -z "$POSTGRES_PASSWORD" ]; then
+    POSTGRES_PASSWORD=$(generate_key)
+  fi
+  POSTGRES_DB="pgadmin_db_$(openssl rand -hex 4)"
   APP_DIR="$INSTALL_DIR/pgadmin"
 elif [ "$APP_TYPE" == "6" ]; then
   read -p "Digite o domínio para o WordPress (ex: wordpress.meusite.com): " DOMINIO
@@ -230,12 +236,13 @@ elif [ "$APP_TYPE" == "5" ]; then
     exit 1
   fi
   sudo cp "$COMPOSER_DIR/pgadmin-docker.yaml" "$APP_DIR/docker-compose.yml"
-  sudo sed -i "s|\$PGADMIN_PORT|$PGADMIN_PORT|g" "$APP_DIR/docker-compose.yml"
   sudo tee "$APP_DIR/.env" > /dev/null <<EOL
 PGADMIN_DEFAULT_EMAIL=$PGADMIN_DEFAULT_EMAIL
 PGADMIN_DEFAULT_PASSWORD=$PGADMIN_DEFAULT_PASSWORD
-PGADMIN_CONFIG_SERVER_MODE=False
-PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED=False
+POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+POSTGRES_DB=$POSTGRES_DB
+POSTGRES_PORT=$POSTGRES_PORT
+PGADMIN_PORT=$PGADMIN_PORT
 EOL
   sudo docker-compose up -d
   if [ ! -f "$NGINX_DIR/pgadmin.conf" ]; then
@@ -299,7 +306,6 @@ elif [ "$APP_TYPE" == "8" ]; then
     echo "Arquivo de configuração não encontrado: $COMPOSER_DIR/chatwoot-composer.yaml"
     exit 1
   fi
-  # Substituir todas as variáveis no docker-compose.yml
   sudo sed -e "s|\$DOMINIO|$DOMINIO|g" \
            -e "s|\$SECRET_KEY_BASE|$SECRET_KEY_BASE|g" \
            -e "s|\$POSTGRES_DATABASE|$POSTGRES_DATABASE|g" \
@@ -367,8 +373,11 @@ elif [ "$APP_TYPE" == "4" ]; then
   echo "Senha PostgreSQL: $POSTGRES_PASSWORD"
 elif [ "$APP_TYPE" == "5" ]; then
   echo "PG Admin configurado via Docker no domínio: $DOMINIO com porta $PGADMIN_PORT"
-  echo "Email: $PGADMIN_DEFAULT_EMAIL"
-  echo "Senha: $PGADMIN_DEFAULT_PASSWORD"
+  echo "Porta PostgreSQL: $POSTGRES_PORT"
+  echo "Banco de dados: $POSTGRES_DB"
+  echo "Email PG Admin: $PGADMIN_DEFAULT_EMAIL"
+  echo "Senha PG Admin: $PGADMIN_DEFAULT_PASSWORD"
+  echo "Senha PostgreSQL: $POSTGRES_PASSWORD"
 elif [ "$APP_TYPE" == "6" ]; then
   echo "WordPress configurado via Docker no domínio: $DOMINIO com porta $WORDPRESS_PORT"
   echo "Banco de dados: $MYSQL_DATABASE"
