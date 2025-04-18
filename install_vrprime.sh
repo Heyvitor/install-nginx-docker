@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # Definir cores
-BLUE_BG="\033[44m"   # Fundo azul
-WHITE_TEXT="\033[97m" # Texto branco
-RESET="\033[0m"      # Resetar cores
+BLUE_BG="\033[44m"
+WHITE_TEXT="\033[97m"
+RESET="\033[0m"
 
 # Verificar se é root
 if [ "$(id -u)" -ne 0 ]; then
@@ -27,6 +27,36 @@ center_text "VR PRIME" $TERM_WIDTH
 center_text "https://www.vrprime.com.br" $TERM_WIDTH
 printf "\n${RESET}\n"
 
+# Diretórios base
+INSTALL_DIR="/home/install-nginx-docker/vrprime/install"
+COMPOSER_DIR="/home/install-nginx-docker/vrprime/composer"
+NGINX_DIR="/home/install-nginx-docker/vrprime/nginx"
+REGISTRY_FILE="/home/install-nginx-docker/vrprime/installations.txt"
+
+# Criar diretórios se não existirem
+sudo mkdir -p "$INSTALL_DIR" "$COMPOSER_DIR" "$NGINX_DIR"
+sudo touch "$REGISTRY_FILE" 2>/dev/null
+sudo chmod 666 "$REGISTRY_FILE" 2>/dev/null
+
+# Função para gerar uma chave ou senha
+generate_key() {
+  openssl rand -base64 48 | tr -d '/+=' | head -c 32
+}
+
+# Função para gerar SECRET_KEY_BASE (128 caracteres, base64)
+generate_secret_key_base() {
+  openssl rand -base64 96 | tr -d '/+=' | head -c 128
+}
+
+# Função para registrar uma instalação no arquivo de registro
+register_installation() {
+  local domain="$1"
+  local app_type="$2"
+  local composer_file="$3"
+  local install_dir="$4"
+  echo "$domain|$app_type|$composer_file|$install_dir" | sudo tee -a "$REGISTRY_FILE" > /dev/null
+}
+
 # Menu de seleção
 echo "Selecione o tipo de operação:"
 echo "1) Instalar aplicação"
@@ -40,21 +70,99 @@ fi
 
 # Se a opção for desinstalar
 if [ "$OPERATION_TYPE" = "2" ]; then
-  # Verificar as aplicações instaladas
-  if [ ! -d "$INSTALL_DIR" ]; then
-    echo "Nenhuma aplicação encontrada para desinstalar."
-    exit 1
+  # Verificar se existe o arquivo de registro
+  if [ ! -f "$REGISTRY_FILE" ] || [ ! -s "$REGISTRY_FILE" ]; then
+    echo "Nenhuma aplicação registrada para desinstalação."
+    
+    # Tentar detectar instalações não registradas
+    echo "Verificando instalações não registradas..."
+    
+    # Verificar pastas no diretório de instalação
+    if [ -d "$INSTALL_DIR" ] && [ "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ]; then
+      echo "Encontradas pastas no diretório de instalação:"
+      for dir in "$INSTALL_DIR"/*; do
+        if [ -d "$dir" ]; then
+          echo "- $(basename "$dir")"
+        fi
+      done
+      
+      read -p "Digite o nome da pasta da aplicação a ser desinstalada: " SELECTED_DIR
+      
+      if [ -z "$SELECTED_DIR" ]; then
+        echo "Nome de pasta inválido"
+        exit 1
+      fi
+      
+      APP_DIR="$INSTALL_DIR/$SELECTED_DIR"
+      
+      if [ ! -d "$APP_DIR" ]; then
+        echo "Diretório não encontrado: $APP_DIR"
+        exit 1
+      fi
+      
+      # Confirmar a desinstalação
+      read -p "Esta ação removerá a pasta $APP_DIR e possivelmente os volumes Docker associados. Continuar? (s/n): " CONFIRM
+      if [ "$CONFIRM" != "s" ] && [ "$CONFIRM" != "S" ]; then
+        echo "Operação cancelada."
+        exit 0
+      fi
+      
+      # Desinstalar a aplicação
+      echo "Desinstalando a aplicação em $APP_DIR..."
+      
+      # Verificar se é uma aplicação Docker
+      if [ -f "$APP_DIR/docker-compose.yml" ]; then
+        cd "$APP_DIR"
+        echo "Parando e removendo contêineres..."
+        sudo docker-compose down -v
+        
+        # Tentar encontrar e remover volumes
+        echo "Procurando volumes associados..."
+        DIR_NAME=$(basename "$APP_DIR")
+        VOLUME_PREFIX=$(echo "$DIR_NAME" | tr '-' '_')
+        
+        for VOLUME in $(sudo docker volume ls -q | grep "$VOLUME_PREFIX" 2>/dev/null); do
+          echo "Removendo volume: $VOLUME"
+          sudo docker volume rm "$VOLUME" || true
+        done
+      fi
+      
+      # Tentar encontrar e remover configuração Nginx
+      echo "Procurando configurações Nginx relacionadas..."
+      for NGINX_CONF in $(ls /etc/nginx/sites-available/ 2>/dev/null); do
+        # Verificar se o arquivo contém o nome do diretório
+        if grep -q "$SELECTED_DIR" "/etc/nginx/sites-available/$NGINX_CONF" 2>/dev/null; then
+          echo "Removendo configuração Nginx: $NGINX_CONF"
+          sudo rm -f "/etc/nginx/sites-enabled/$NGINX_CONF" 2>/dev/null
+          sudo rm -f "/etc/nginx/sites-available/$NGINX_CONF" 2>/dev/null
+        fi
+      done
+      
+      # Remover o diretório
+      sudo rm -rf "$APP_DIR"
+      echo "Diretório de instalação removido."
+      
+      # Recarregar Nginx
+      sudo systemctl reload nginx
+      
+      echo "Desinstalação concluída."
+      exit 0
+    else
+      echo "Nenhuma aplicação encontrada para desinstalar."
+      exit 1
+    fi
   fi
   
-  # Listar aplicações disponíveis para desinstalação
+  # Listar instalações registradas
   echo "Aplicações instaladas:"
-  ls -1 "$INSTALL_DIR" | grep -v "\.gitkeep" | cat -n
-  
-  # Verificar se não há aplicações
-  if [ -z "$(ls -A "$INSTALL_DIR" | grep -v "\.gitkeep")" ]; then
-    echo "Nenhuma aplicação encontrada para desinstalar."
-    exit 1
-  fi
+  i=1
+  while read -r LINE; do
+    DOMAIN=$(echo "$LINE" | cut -d'|' -f1)
+    APP_TYPE=$(echo "$LINE" | cut -d'|' -f2)
+    INSTALL_PATH=$(echo "$LINE" | cut -d'|' -f4)
+    echo "$i) $APP_TYPE - Domínio: $DOMAIN - Diretório: $INSTALL_PATH"
+    i=$((i+1))
+  done < "$REGISTRY_FILE"
   
   # Pedir ao usuário para selecionar uma aplicação
   read -p "Digite o número da aplicação a ser desinstalada: " APP_NUMBER
@@ -65,64 +173,82 @@ if [ "$OPERATION_TYPE" = "2" ]; then
     exit 1
   fi
   
-  # Obter o nome da aplicação a partir do número
-  SELECTED_APP=$(ls -1 "$INSTALL_DIR" | grep -v "\.gitkeep" | sed -n "${APP_NUMBER}p")
+  # Obter a linha correspondente ao número selecionado
+  SELECTED_LINE=$(sed -n "${APP_NUMBER}p" "$REGISTRY_FILE")
   
-  if [ -z "$SELECTED_APP" ]; then
+  if [ -z "$SELECTED_LINE" ]; then
     echo "Aplicação não encontrada"
     exit 1
   fi
   
-  APP_DIR="$INSTALL_DIR/$SELECTED_APP"
+  # Extrair informações da linha selecionada
+  DOMAIN=$(echo "$SELECTED_LINE" | cut -d'|' -f1)
+  APP_TYPE=$(echo "$SELECTED_LINE" | cut -d'|' -f2)
+  COMPOSER_FILE=$(echo "$SELECTED_LINE" | cut -d'|' -f3)
+  INSTALL_PATH=$(echo "$SELECTED_LINE" | cut -d'|' -f4)
   
-  # Verificar se o diretório existe
-  if [ ! -d "$APP_DIR" ]; then
-    echo "Diretório da aplicação não encontrado: $APP_DIR"
-    exit 1
+  # Confirmar a desinstalação
+  echo "Você selecionou: $APP_TYPE - $DOMAIN - $INSTALL_PATH"
+  read -p "Esta ação removerá todos os dados da aplicação. Continuar? (s/n): " CONFIRM
+  if [ "$CONFIRM" != "s" ] && [ "$CONFIRM" != "S" ]; then
+    echo "Operação cancelada."
+    exit 0
   fi
   
-  # Verificar o arquivo docker-compose.yml
-  if [ -f "$APP_DIR/docker-compose.yml" ]; then
-    echo "Desinstalando $SELECTED_APP..."
-    
-    # Parar e remover os contêineres
-    cd "$APP_DIR"
-    sudo docker-compose down -v
-    
-    # Remover volumes associados
-    VOLUMES=$(grep -o "volume[s]\?:.*" "$APP_DIR/docker-compose.yml" | sed 's/volume[s]\?://g' | tr -d ' ' | tr '\n' ' ')
-    if [ -n "$VOLUMES" ]; then
-      echo "Removendo volumes: $VOLUMES"
-      for VOLUME in $VOLUMES; do
-        # Remover apenas o nome do volume até o primeiro ':'
-        VOLUME_NAME=$(echo "$VOLUME" | cut -d':' -f1)
-        # Verificar se o volume existe
-        if sudo docker volume ls | grep -q "$VOLUME_NAME"; then
-          sudo docker volume rm "$VOLUME_NAME"
-        fi
+  echo "Desinstalando $APP_TYPE - $DOMAIN..."
+  
+  # Verificar se o diretório de instalação existe
+  if [ -d "$INSTALL_PATH" ]; then
+    # Para aplicações Docker
+    if [ -f "$INSTALL_PATH/docker-compose.yml" ]; then
+      # Parar e remover os contêineres
+      cd "$INSTALL_PATH"
+      echo "Parando e removendo contêineres..."
+      sudo docker-compose down -v
+      
+      # Identificar e remover volumes Docker
+      echo "Removendo volumes Docker associados..."
+      
+      # Extrair nome da base do diretório
+      DIR_NAME=$(basename "$INSTALL_PATH")
+      VOLUME_PREFIX=$(echo "$DIR_NAME" | tr '-' '_')
+      
+      # Procurar volumes com o prefixo correspondente
+      for VOLUME in $(sudo docker volume ls -q | grep "$VOLUME_PREFIX" 2>/dev/null); do
+        echo "Removendo volume: $VOLUME"
+        sudo docker volume rm "$VOLUME" || true
       done
+      
+      # Remover diretório da aplicação
+      sudo rm -rf "$INSTALL_PATH"
+      echo "Diretório de instalação removido: $INSTALL_PATH"
+    else
+      echo "Arquivo docker-compose.yml não encontrado em $INSTALL_PATH"
+      sudo rm -rf "$INSTALL_PATH"
+      echo "Diretório de instalação removido: $INSTALL_PATH"
     fi
   else
-    echo "Arquivo docker-compose.yml não encontrado em $APP_DIR"
+    echo "Diretório de instalação não encontrado: $INSTALL_PATH"
   fi
   
   # Verificar configuração Nginx
-  DOMAIN_CONF="/etc/nginx/sites-available/$SELECTED_APP"
-  if [ -f "$DOMAIN_CONF" ]; then
-    # Remover link simbólico
-    sudo rm -f "/etc/nginx/sites-enabled/$SELECTED_APP"
-    # Remover arquivo de configuração
-    sudo rm -f "$DOMAIN_CONF"
-    # Recarregar Nginx
+  NGINX_CONF="/etc/nginx/sites-available/$DOMAIN"
+  if [ -f "$NGINX_CONF" ]; then
+    echo "Removendo configuração Nginx para $DOMAIN..."
+    sudo rm -f "/etc/nginx/sites-enabled/$DOMAIN" 2>/dev/null
+    sudo rm -f "$NGINX_CONF"
     sudo systemctl reload nginx
-    echo "Configuração Nginx removida para $SELECTED_APP"
+    echo "Configuração Nginx removida."
+  else
+    echo "Configuração Nginx não encontrada para $DOMAIN."
   fi
   
-  # Remover diretório da aplicação
-  sudo rm -rf "$APP_DIR"
-  echo "Diretório $APP_DIR removido"
+  # Remover entrada do arquivo de registro
+  echo "Removendo entrada do registro de instalações..."
+  grep -v "^$DOMAIN|" "$REGISTRY_FILE" | sudo tee "$REGISTRY_FILE.tmp" > /dev/null
+  sudo mv "$REGISTRY_FILE.tmp" "$REGISTRY_FILE"
   
-  echo "Desinstalação de $SELECTED_APP concluída com sucesso!"
+  echo "Desinstalação de $APP_TYPE - $DOMAIN concluída com sucesso!"
   exit 0
 fi
 
@@ -138,29 +264,12 @@ echo "7) MySql+PhpMyAdmin - Docker"
 echo "8) Chatwoot - Docker"
 read -p "Opção (1/2/3/4/5/6/7/8): " APP_TYPE
 
-# Verificar se a opção é válida - compatible sh syntax
 if [ "$APP_TYPE" != "1" ] && [ "$APP_TYPE" != "2" ] && [ "$APP_TYPE" != "3" ] && \
    [ "$APP_TYPE" != "4" ] && [ "$APP_TYPE" != "5" ] && [ "$APP_TYPE" != "6" ] && \
    [ "$APP_TYPE" != "7" ] && [ "$APP_TYPE" != "8" ]; then
   echo "Opção inválida"
   exit 1
 fi
-
-# Diretórios base
-INSTALL_DIR="/home/Projetos/install-nginx-docker/vrprime/install"
-COMPOSER_DIR="/home/Projetos/install-nginx-docker/vrprime/composer"
-NGINX_DIR="/home/Projetos/install-nginx-docker/vrprime/nginx"
-sudo mkdir -p "$INSTALL_DIR" "$COMPOSER_DIR" "$NGINX_DIR"
-
-# Função para gerar uma chave ou senha
-generate_key() {
-  openssl rand -base64 48 | tr -d '/+=' | head -c 32
-}
-
-# Função para gerar SECRET_KEY_BASE (128 caracteres, base64)
-generate_secret_key_base() {
-  openssl rand -base64 96 | tr -d '/+=' | head -c 128
-}
 
 # Pedir domínio e email
 case "$APP_TYPE" in
@@ -180,7 +289,6 @@ case "$APP_TYPE" in
     read -p "Digite a versão do Evolution API (ex: v2.2.3) [padrão: v2.2.3]: " EVOLUTION_VERSION
     EVOLUTION_VERSION=${EVOLUTION_VERSION:-v2.2.3}
     read -p "Digite a porta externa para o Evolution API (ex: 8080): " EVOLUTION_PORT
-    # Validação de porta compatível com sh
     case "$EVOLUTION_PORT" in
       ''|*[!0-9]*) echo "Porta inválida"; exit 1 ;;
     esac
@@ -256,10 +364,11 @@ case "$APP_TYPE" in
       exit 1
     fi
     sudo sed -e "s|\$DOMINIO|$DOMINIO|g" -e "s|\$LARAVEL_PATH|$LARAVEL_PATH|g" "$NGINX_DIR/laravel.conf" > "/etc/nginx/sites-available/$DOMINIO"
+    # Adicionar registro de instalação
+    register_installation "$DOMINIO" "Laravel" "N/A" "$LARAVEL_PATH"
     ;;
   2)
     read -p "Digite a porta do servidor Node.js: " PORTA
-    # Validação de porta compatível com sh
     case "$PORTA" in
       ''|*[!0-9]*) echo "Porta inválida"; exit 1 ;;
     esac
@@ -268,6 +377,8 @@ case "$APP_TYPE" in
       exit 1
     fi
     sudo sed -e "s|\$DOMINIO|$DOMINIO|g" -e "s|\$PORTA|$PORTA|g" "$NGINX_DIR/node.conf" > "/etc/nginx/sites-available/$DOMINIO"
+    # Adicionar registro de instalação
+    register_installation "$DOMINIO" "Node.js" "N/A" "$INSTALL_DIR/$DOMINIO"
     ;;
   3)
     sudo mkdir -p "$APP_DIR"
@@ -277,7 +388,7 @@ case "$APP_TYPE" in
       exit 1
     fi
     sudo sed -e "s|\$N8N_VERSION|$N8N_VERSION|g" "$COMPOSER_DIR/n8n-composer.yaml" > "$APP_DIR/docker-compose.yml"
-    sudo tee "$APP_DIR/.env" > /dev/null <<EOL
+    sudo tee "$APP_DIR/.env" > /dev/null << EOL
 N8N_HOST=$N8N_HOST
 N8N_PORT=5678
 N8N_PROTOCOL=https
@@ -294,6 +405,8 @@ EOL
       exit 1
     fi
     sudo sed -e "s|\$DOMINIO|$DOMINIO|g" "$NGINX_DIR/n8n.conf" > "/etc/nginx/sites-available/$DOMINIO"
+    # Adicionar registro de instalação
+    register_installation "$DOMINIO" "N8N Docker" "n8n-composer.yaml" "$APP_DIR"
     ;;
   4)
     sudo mkdir -p "$APP_DIR"
@@ -303,7 +416,7 @@ EOL
       exit 1
     fi
     sudo sed -e "s|\$EVOLUTION_VERSION|$EVOLUTION_VERSION|g" -e "s|\$EVOLUTION_PORT|$EVOLUTION_PORT|g" "$COMPOSER_DIR/evolution-composer.yaml" > "$APP_DIR/docker-compose.yml"
-    sudo tee "$APP_DIR/.env" > /dev/null <<EOL
+    sudo tee "$APP_DIR/.env" > /dev/null << EOL
 SERVER_URL=https://$SERVER_URL
 AUTHENTICATION_TYPE=apikey
 AUTHENTICATION_API_KEY=$AUTHENTICATION_API_KEY
@@ -341,6 +454,8 @@ EOL
       exit 1
     fi
     sudo sed -e "s|\$DOMINIO|$DOMINIO|g" -e "s|localhost:8080|localhost:$EVOLUTION_PORT|g" "$NGINX_DIR/evolution.conf" > "/etc/nginx/sites-available/$DOMINIO"
+    # Adicionar registro de instalação
+    register_installation "$DOMINIO" "Evolution API Docker" "evolution-composer.yaml" "$APP_DIR"
     ;;
   5)
     sudo mkdir -p "$APP_DIR"
@@ -350,7 +465,7 @@ EOL
       exit 1
     fi
     sudo cp "$COMPOSER_DIR/pgadmin-docker.yaml" "$APP_DIR/docker-compose.yml"
-    sudo tee "$APP_DIR/.env" > /dev/null <<EOL
+    sudo tee "$APP_DIR/.env" > /dev/null << EOL
 PGADMIN_DEFAULT_EMAIL=$PGADMIN_DEFAULT_EMAIL
 PGADMIN_DEFAULT_PASSWORD=$PGADMIN_DEFAULT_PASSWORD
 POSTGRES_PASSWORD=$POSTGRES_PASSWORD
@@ -364,6 +479,8 @@ EOL
       exit 1
     fi
     sudo sed -e "s|\$DOMINIO|$DOMINIO|g" -e "s|\$PGADMIN_PORT|$PGADMIN_PORT|g" "$NGINX_DIR/pgadmin.conf" > "/etc/nginx/sites-available/$DOMINIO"
+    # Adicionar registro de instalação
+    register_installation "$DOMINIO" "PG Admin Docker" "pgadmin-docker.yaml" "$APP_DIR"
     ;;
   6)
     sudo mkdir -p "$APP_DIR"
@@ -374,7 +491,7 @@ EOL
     fi
     sudo cp "$COMPOSER_DIR/wordpress-docker.yaml" "$APP_DIR/docker-compose.yml"
     sudo sed -i "s|\$WORDPRESS_PORT|$WORDPRESS_PORT|g" "$APP_DIR/docker-compose.yml"
-    sudo tee "$APP_DIR/.env" > /dev/null <<EOL
+    sudo tee "$APP_DIR/.env" > /dev/null << EOL
 WORDPRESS_DB_HOST=db
 WORDPRESS_DB_USER=$MYSQL_USER
 WORDPRESS_DB_PASSWORD=$MYSQL_PASSWORD
@@ -390,6 +507,8 @@ EOL
       exit 1
     fi
     sudo sed -e "s|\$DOMINIO|$DOMINIO|g" -e "s|\$WORDPRESS_PORT|$WORDPRESS_PORT|g" "$NGINX_DIR/wordpress.conf" > "/etc/nginx/sites-available/$DOMINIO"
+    # Adicionar registro de instalação
+    register_installation "$DOMINIO" "WordPress Docker" "wordpress-docker.yaml" "$APP_DIR"
     ;;
   7)
     sudo mkdir -p "$APP_DIR"
@@ -400,7 +519,7 @@ EOL
     fi
     sudo cp "$COMPOSER_DIR/mysql-phpmy-composer.yaml" "$APP_DIR/docker-compose.yml"
     sudo sed -i "s|\$PHPMYADMIN_PORT|$PHPMYADMIN_PORT|g" "$APP_DIR/docker-compose.yml"
-    sudo tee "$APP_DIR/.env" > /dev/null <<EOL
+    sudo tee "$APP_DIR/.env" > /dev/null << EOL
 MYSQL_ROOT_PASSWORD=$MYSQL_ROOT_PASSWORD
 MYSQL_DATABASE=$MYSQL_DATABASE
 MYSQL_USER=$MYSQL_USER
@@ -415,6 +534,8 @@ EOL
       exit 1
     fi
     sudo sed -e "s|\$DOMINIO|$DOMINIO|g" -e "s|\$PHPMYADMIN_PORT|$PHPMYADMIN_PORT|g" "$NGINX_DIR/mysql-phpmy.conf" > "/etc/nginx/sites-available/$DOMINIO"
+    # Adicionar registro de instalação
+    register_installation "$DOMINIO" "MySQL+PhpMyAdmin Docker" "mysql-phpmy-composer.yaml" "$APP_DIR"
     ;;
   8)
     sudo mkdir -p "$APP_DIR"
@@ -439,7 +560,7 @@ EOL
     sed -i "s|\\\$POSTGRES_PASSWORD|$POSTGRES_PASSWORD|g" "$APP_DIR/docker-compose.yml"
     sed -i "s|\\\$CHATWOOT_PORT|$CHATWOOT_PORT|g" "$APP_DIR/docker-compose.yml"
     
-    sudo tee "$APP_DIR/.env" > /dev/null <<EOL
+    sudo tee "$APP_DIR/.env" > /dev/null << EOL
 FRONTEND_URL=https://$DOMINIO
 SECRET_KEY_BASE=$SECRET_KEY_BASE
 RAILS_ENV=production
@@ -463,6 +584,8 @@ EOL
       exit 1
     fi
     sudo sed -e "s|\$DOMINIO|$DOMINIO|g" -e "s|\$CHATWOOT_PORT|$CHATWOOT_PORT|g" "$NGINX_DIR/chatwoot.conf" > "/etc/nginx/sites-available/$DOMINIO"
+    # Adicionar registro de instalação
+    register_installation "$DOMINIO" "Chatwoot Docker" "chatwoot-composer.yaml" "$APP_DIR"
     ;;
 esac
 
