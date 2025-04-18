@@ -47,19 +47,19 @@ if [ "$APP_TYPE" != "1" ] && [ "$APP_TYPE" != "2" ] && [ "$APP_TYPE" != "3" ] &&
 fi
 
 # Diretórios base
-INSTALL_DIR="/home/install-nginx-docker/vrprime/install"
-COMPOSER_DIR="/home/install-nginx-docker/vrprime/composer"
-NGINX_DIR="/home/install-nginx-docker/vrprime/nginx"
+INSTALL_DIR="/home/Projetos/install-nginx-docker/vrprime/install"
+COMPOSER_DIR="/home/Projetos/install-nginx-docker/vrprime/composer"
+NGINX_DIR="/home/Projetos/install-nginx-docker/vrprime/nginx"
 sudo mkdir -p "$INSTALL_DIR" "$COMPOSER_DIR" "$NGINX_DIR"
 
 # Função para gerar uma chave ou senha
 generate_key() {
-  openssl rand -base64 48 | tr -d '\n' | head -c 32
+  openssl rand -base64 48 | tr -d '/+=' | head -c 32
 }
 
 # Função para gerar SECRET_KEY_BASE (128 caracteres, base64)
 generate_secret_key_base() {
-  openssl rand -base64 96 | tr -d '\n' | head -c 128
+  openssl rand -base64 96 | tr -d '/+=' | head -c 128
 }
 
 # Pedir domínio e email
@@ -86,7 +86,7 @@ elif [ "$APP_TYPE" == "4" ]; then
   if [ -z "$POSTGRES_PASSWORD" ]; then
     POSTGRES_PASSWORD=$(generate_key)
   fi
-  AUTHENTICATION_API_KEY=$(generate_key)
+  AUTHENTICATION_API_KEY=$(generate_secret_key_base)
   APP_DIR="$INSTALL_DIR/evolution"
 elif [ "$APP_TYPE" == "5" ]; then
   read -p "Digite o domínio para o PG Admin (ex: pgadmin.meusite.com): " DOMINIO
@@ -306,13 +306,22 @@ elif [ "$APP_TYPE" == "8" ]; then
     echo "Arquivo de configuração não encontrado: $COMPOSER_DIR/chatwoot-composer.yaml"
     exit 1
   fi
-  sudo sed -e "s|\$DOMINIO|$DOMINIO|g" \
-           -e "s|\$SECRET_KEY_BASE|$SECRET_KEY_BASE|g" \
-           -e "s|\$POSTGRES_DATABASE|$POSTGRES_DATABASE|g" \
-           -e "s|\$POSTGRES_USERNAME|$POSTGRES_USERNAME|g" \
-           -e "s|\$POSTGRES_PASSWORD|$POSTGRES_PASSWORD|g" \
-           -e "s|\$CHATWOOT_PORT|$CHATWOOT_PORT|g" \
-           "$COMPOSER_DIR/chatwoot-composer.yaml" > "$APP_DIR/docker-compose.yml"
+  
+  # Verificar se todas as variáveis necessárias estão definidas
+  if [ -z "$DOMINIO" ] || [ -z "$SECRET_KEY_BASE" ] || [ -z "$POSTGRES_DATABASE" ] || [ -z "$POSTGRES_USERNAME" ] || [ -z "$POSTGRES_PASSWORD" ] || [ -z "$CHATWOOT_PORT" ]; then
+    echo "Erro: Uma ou mais variáveis necessárias não estão definidas"
+    exit 1
+  fi
+  
+  # Fazer as substituições com cada variável individualmente para melhor diagnóstico
+  cp "$COMPOSER_DIR/chatwoot-composer.yaml" "$APP_DIR/docker-compose.yml"
+  sed -i "s|\\\$DOMINIO|$DOMINIO|g" "$APP_DIR/docker-compose.yml"
+  sed -i "s|\\\$SECRET_KEY_BASE|$SECRET_KEY_BASE|g" "$APP_DIR/docker-compose.yml"
+  sed -i "s|\\\$POSTGRES_DATABASE|$POSTGRES_DATABASE|g" "$APP_DIR/docker-compose.yml"
+  sed -i "s|\\\$POSTGRES_USERNAME|$POSTGRES_USERNAME|g" "$APP_DIR/docker-compose.yml"
+  sed -i "s|\\\$POSTGRES_PASSWORD|$POSTGRES_PASSWORD|g" "$APP_DIR/docker-compose.yml"
+  sed -i "s|\\\$CHATWOOT_PORT|$CHATWOOT_PORT|g" "$APP_DIR/docker-compose.yml"
+  
   sudo tee "$APP_DIR/.env" > /dev/null <<EOL
 FRONTEND_URL=https://$DOMINIO
 SECRET_KEY_BASE=$SECRET_KEY_BASE

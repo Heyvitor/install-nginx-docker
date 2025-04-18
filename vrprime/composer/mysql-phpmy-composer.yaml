@@ -8,8 +8,11 @@ services:
       MYSQL_DATABASE: ${MYSQL_DATABASE}
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      UPLOAD_LIMIT: 100M
     volumes:
       - db_data:/var/lib/mysql
+    ports:
+      - "127.0.0.1:3306:3306"  # só a máquina local pode acessar
 
   phpmyadmin:
     image: phpmyadmin/phpmyadmin:5.2.1
