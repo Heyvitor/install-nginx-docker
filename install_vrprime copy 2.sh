@@ -28,105 +28,6 @@ center_text "https://www.vrprime.com.br" $TERM_WIDTH
 printf "\n${RESET}\n"
 
 # Menu de seleção
-echo "Selecione o tipo de operação:"
-echo "1) Instalar aplicação"
-echo "2) Desinstalar aplicação"
-read -p "Opção (1/2): " OPERATION_TYPE
-
-if [ "$OPERATION_TYPE" != "1" ] && [ "$OPERATION_TYPE" != "2" ]; then
-  echo "Opção inválida"
-  exit 1
-fi
-
-# Se a opção for desinstalar
-if [ "$OPERATION_TYPE" = "2" ]; then
-  # Verificar as aplicações instaladas
-  if [ ! -d "$INSTALL_DIR" ]; then
-    echo "Nenhuma aplicação encontrada para desinstalar."
-    exit 1
-  fi
-  
-  # Listar aplicações disponíveis para desinstalação
-  echo "Aplicações instaladas:"
-  ls -1 "$INSTALL_DIR" | grep -v "\.gitkeep" | cat -n
-  
-  # Verificar se não há aplicações
-  if [ -z "$(ls -A "$INSTALL_DIR" | grep -v "\.gitkeep")" ]; then
-    echo "Nenhuma aplicação encontrada para desinstalar."
-    exit 1
-  fi
-  
-  # Pedir ao usuário para selecionar uma aplicação
-  read -p "Digite o número da aplicação a ser desinstalada: " APP_NUMBER
-  
-  # Validar a entrada
-  if ! echo "$APP_NUMBER" | grep -q "^[0-9]\+$"; then
-    echo "Número inválido"
-    exit 1
-  fi
-  
-  # Obter o nome da aplicação a partir do número
-  SELECTED_APP=$(ls -1 "$INSTALL_DIR" | grep -v "\.gitkeep" | sed -n "${APP_NUMBER}p")
-  
-  if [ -z "$SELECTED_APP" ]; then
-    echo "Aplicação não encontrada"
-    exit 1
-  fi
-  
-  APP_DIR="$INSTALL_DIR/$SELECTED_APP"
-  
-  # Verificar se o diretório existe
-  if [ ! -d "$APP_DIR" ]; then
-    echo "Diretório da aplicação não encontrado: $APP_DIR"
-    exit 1
-  fi
-  
-  # Verificar o arquivo docker-compose.yml
-  if [ -f "$APP_DIR/docker-compose.yml" ]; then
-    echo "Desinstalando $SELECTED_APP..."
-    
-    # Parar e remover os contêineres
-    cd "$APP_DIR"
-    sudo docker-compose down -v
-    
-    # Remover volumes associados
-    VOLUMES=$(grep -o "volume[s]\?:.*" "$APP_DIR/docker-compose.yml" | sed 's/volume[s]\?://g' | tr -d ' ' | tr '\n' ' ')
-    if [ -n "$VOLUMES" ]; then
-      echo "Removendo volumes: $VOLUMES"
-      for VOLUME in $VOLUMES; do
-        # Remover apenas o nome do volume até o primeiro ':'
-        VOLUME_NAME=$(echo "$VOLUME" | cut -d':' -f1)
-        # Verificar se o volume existe
-        if sudo docker volume ls | grep -q "$VOLUME_NAME"; then
-          sudo docker volume rm "$VOLUME_NAME"
-        fi
-      done
-    fi
-  else
-    echo "Arquivo docker-compose.yml não encontrado em $APP_DIR"
-  fi
-  
-  # Verificar configuração Nginx
-  DOMAIN_CONF="/etc/nginx/sites-available/$SELECTED_APP"
-  if [ -f "$DOMAIN_CONF" ]; then
-    # Remover link simbólico
-    sudo rm -f "/etc/nginx/sites-enabled/$SELECTED_APP"
-    # Remover arquivo de configuração
-    sudo rm -f "$DOMAIN_CONF"
-    # Recarregar Nginx
-    sudo systemctl reload nginx
-    echo "Configuração Nginx removida para $SELECTED_APP"
-  fi
-  
-  # Remover diretório da aplicação
-  sudo rm -rf "$APP_DIR"
-  echo "Diretório $APP_DIR removido"
-  
-  echo "Desinstalação de $SELECTED_APP concluída com sucesso!"
-  exit 0
-fi
-
-# Menu de seleção para instalação
 echo "Selecione o tipo de aplicação:"
 echo "1) Laravel"
 echo "2) Node.js/Express"
@@ -147,9 +48,9 @@ if [ "$APP_TYPE" != "1" ] && [ "$APP_TYPE" != "2" ] && [ "$APP_TYPE" != "3" ] &&
 fi
 
 # Diretórios base
-INSTALL_DIR="/home/Projetos/install-nginx-docker/vrprime/install"
-COMPOSER_DIR="/home/Projetos/install-nginx-docker/vrprime/composer"
-NGINX_DIR="/home/Projetos/install-nginx-docker/vrprime/nginx"
+INSTALL_DIR="/home/install-nginx-docker/vrprime/install"
+COMPOSER_DIR="/home/install-nginx-docker/vrprime/composer"
+NGINX_DIR="/home/install-nginx-docker/vrprime/nginx"
 sudo mkdir -p "$INSTALL_DIR" "$COMPOSER_DIR" "$NGINX_DIR"
 
 # Função para gerar uma chave ou senha
